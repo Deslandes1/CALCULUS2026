@@ -1,10 +1,14 @@
 # app.py
 # =============================================================================
 # CALCULUS — Built by Gesner Deslandes
-# Streamlit app · bilingual EN/FR · female neural voice · AI tutor · Black Board
+# Streamlit app · bilingual EN/FR · native female voice · AI tutor · Black Board
+#
+# Reading: every lesson is read line-by-line in the language currently active
+# (Denise for FR, Jenny for EN). Exercises read question + hint + solution.
 # =============================================================================
 
 import random
+import re
 
 import streamlit as st
 
@@ -239,10 +243,153 @@ LANG = st.session_state.lang
 
 
 def T(d):
-    """Localize a {en, fr} dict."""
+    """Localize a {en, fr} dict, or return str."""
     if isinstance(d, dict):
         return d.get(LANG, d.get("en", ""))
     return str(d)
+
+
+def _strip_html(s: str) -> str:
+    """Remove inline HTML tags so speech is clean."""
+    return re.sub(r"<[^>]+>", "", str(s))
+
+
+# =============================================================================
+# ★ BUILD THE COMPLETE LESSON SPEECH TEXT
+# =============================================================================
+def build_lesson_text(topic) -> str:
+    """
+    Produce the FULL lesson text, structured exactly like the page:
+
+        1. Nombres & Système des Nombres Réels.
+        Naturel · Entier · Rationnel.
+        Leçon.
+        <intro>.
+        <section heading>.
+        <section paragraph>.
+        <bullet 1>. <bullet 2>. …
+        <formula>.
+        ★ Formule clé.
+        <formula>.
+        📝 Exemples résolus.
+        Exemple 1. <title>. <expr>. <solution>.
+        Exemple 2. <title>. <expr>. <solution>.
+        …
+    """
+    parts = []
+
+    # --- Title & subtitle ---
+    parts.append(f"{topic['icon']}. {T(topic['name'])}.")
+    parts.append(f"{T(topic['sub'])}.")
+
+    # --- "Leçon" label ---
+    parts.append("Leçon." if LANG == "fr" else "Lesson.")
+
+    # --- Intro ---
+    parts.append(f"{T(topic['lesson']['intro'])}.")
+
+    # --- Sections (heading, paragraph, bullet list, section formula) ---
+    for sec in topic["lesson"].get("sections", []):
+        if "h" in sec:
+            parts.append(f"{T(sec['h'])}.")
+        if "p" in sec:
+            parts.append(f"{T(sec['p'])}.")
+        if "list" in sec:
+            items = sec["list"].get(LANG) or sec["list"].get("en") or []
+            for item in items:
+                clean = _strip_html(item)
+                if clean and not clean.endswith((".", "!", "?")):
+                    clean += "."
+                parts.append(clean)
+        if "formula" in sec:
+            parts.append(f"{sec['formula']}.")
+
+    # --- "★ Formule clé" ---
+    if topic["lesson"].get("formula"):
+        label = "Formule clé." if LANG == "fr" else "Key Formula."
+        parts.append(label)
+        parts.append(f"{topic['lesson']['formula']}.")
+
+    # --- "📝 Exemples résolus" ---
+    examples = topic["lesson"].get("examples") or []
+    if examples:
+        label = "Exemples résolus." if LANG == "fr" else "Worked Examples."
+        parts.append(label)
+        for i, ex in enumerate(examples, 1):
+            ex_label = f"Exemple {i}." if LANG == "fr" else f"Example {i}."
+            parts.append(ex_label)
+            parts.append(f"{T(ex['t'])}.")
+            parts.append(f"{T(ex['expr'])}.")
+            parts.append(f"{T(ex['sol'])}.")
+
+    # --- Join with single spaces (edge-tts / gTTS respect periods as pauses) ---
+    text = " ".join(p.strip() for p in parts if p and str(p).strip())
+    # Collapse any accidental multi-spaces
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+# =============================================================================
+# ★ BUILD COMPLETE EXERCISE SPEECH TEXT
+# =============================================================================
+def build_exercise_text(ex, topic) -> str:
+    """
+    Produce the FULL exercise speech text, structured like the page:
+
+        Résoudre. <question>.
+        Indice. <hint>.
+        Solution. <solution>.
+        Réponse. <answer>.
+    """
+    parts = []
+
+    # "Résoudre" label
+    parts.append("Résoudre." if LANG == "fr" else "Solve.")
+
+    # Question
+    parts.append(f"{ex['q']}.")
+
+    # Hint
+    if ex.get("hint"):
+        parts.append("Indice." if LANG == "fr" else "Hint.")
+        parts.append(f"{ex['hint']}.")
+
+    # Solution
+    if ex.get("solution"):
+        parts.append("Solution.")
+        parts.append(f"{ex['solution']}.")
+
+    # Answer
+    if ex.get("a"):
+        parts.append("Réponse." if LANG == "fr" else "Answer.")
+        parts.append(f"{ex['a']}.")
+
+    text = " ".join(p.strip() for p in parts if p and str(p).strip())
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+# =============================================================================
+# ★ BUILD BLACK BOARD SPEECH TEXT
+# =============================================================================
+def build_bb_text(ex) -> str:
+    """
+    Full Black Board problem text: question + hint + solution + answer.
+    """
+    parts = []
+    parts.append("Résoudre." if LANG == "fr" else "Solve.")
+    parts.append(f"{ex['q']}.")
+    if ex.get("hint"):
+        parts.append("Indice." if LANG == "fr" else "Hint.")
+        parts.append(f"{ex['hint']}.")
+    if ex.get("solution"):
+        parts.append("Solution.")
+        parts.append(f"{ex['solution']}.")
+    if ex.get("a"):
+        parts.append("Réponse." if LANG == "fr" else "Answer.")
+        parts.append(f"{ex['a']}.")
+    text = " ".join(p.strip() for p in parts if p and str(p).strip())
+    return re.sub(r"\s+", " ", text).strip()
 
 
 # -----------------------------------------------------------------------------
@@ -319,9 +466,9 @@ level = st.radio(
 )
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # RENDER: LESSON
-# -----------------------------------------------------------------------------
+# =============================================================================
 def render_lesson(topic):
     st.markdown(f'<div class="lesson-title">{topic["icon"]}. '
                 f'{T(topic["name"])}</div>', unsafe_allow_html=True)
@@ -365,18 +512,18 @@ def render_lesson(topic):
         html += "</div>"
         st.markdown(html, unsafe_allow_html=True)
 
-    # Read Lesson button
-    lesson_text = (f"{T(topic['name'])}. {T(topic['lesson']['intro'])}. "
-                   f"{'Formule clé' if LANG == 'fr' else 'Key formula'}: "
-                   f"{topic['lesson'].get('formula', '')}")
-    if st.button("🔊 " + ("Lire la leçon" if LANG == "fr" else "Read Lesson"),
-                 key=f"read_lesson_{topic['id']}"):
+    # ---- READ FULL LESSON ----
+    lesson_text = build_lesson_text(topic)
+    btn_label = ("🔊 Lire toute la leçon" if LANG == "fr"
+                 else "🔊 Read Full Lesson")
+    if st.button(btn_label, key=f"read_lesson_{topic['id']}",
+                 use_container_width=True):
         speak(lesson_text, lang=LANG, key=f"tts_lesson_{topic['id']}")
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # RENDER: TUTOR
-# -----------------------------------------------------------------------------
+# =============================================================================
 def render_tutor(topic):
     st.markdown("### 🤖 " + ("Tuteur IA de Calcul" if LANG == "fr"
                              else "AI Calculus Tutor"))
@@ -430,25 +577,32 @@ def render_tutor(topic):
                         if LANG == "fr"
                         else "Try the quick questions above."))
 
+        # Strip markdown/code for speech
+        speech_reply = (reply
+                        .replace("**", "")
+                        .replace("<code>", "")
+                        .replace("</code>", "")
+                        .replace("*", ""))
         st.session_state.tutor_history.append({
-            "topic": topic["id"], "q": user_q or quick, "reply": reply,
+            "topic": topic["id"], "q": user_q or quick,
+            "reply": reply, "speech": speech_reply,
         })
         st.info(reply)
 
-    # Last answer + Read Answer
     if st.session_state.tutor_history:
         last = st.session_state.tutor_history[-1]
         if last["topic"] == topic["id"]:
             if st.button("🔊 " + ("Lire la dernière réponse" if LANG == "fr"
                                   else "Read Last Answer"),
-                         key=f"read_last_{topic['id']}"):
-                speak(last["reply"], lang=LANG,
+                         key=f"read_last_{topic['id']}",
+                         use_container_width=True):
+                speak(last["speech"], lang=LANG,
                       key=f"tts_last_{topic['id']}")
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # RENDER: PRACTICE
-# -----------------------------------------------------------------------------
+# =============================================================================
 def render_practice(topic):
     st.markdown("### ✏️ " + ("Exercices pratiques" if LANG == "fr"
                              else "Practice Exercises"))
@@ -472,7 +626,6 @@ def render_practice(topic):
                 else 'Click "New Exercise" to begin.')
         return
 
-    # Question box
     st.markdown(
         f'<div class="question-box">'
         f'<div class="question-label">'
@@ -483,9 +636,18 @@ def render_practice(topic):
         unsafe_allow_html=True,
     )
 
-    if st.button("🔊 " + ("Lire" if LANG == "fr" else "Read"),
-                 key=f"read_q_{topic['id']}"):
-        speak(ex["q"], lang=LANG, key=f"tts_q_{topic['id']}")
+    # ---- READ FULL EXERCISE (question + hint + solution + answer) ----
+    read_cols = st.columns(2)
+    with read_cols[0]:
+        if st.button("🔊 " + ("Lire la question" if LANG == "fr" else "Read Question"),
+                     key=f"read_q_{topic['id']}", use_container_width=True):
+            speak(ex["q"], lang=LANG, key=f"tts_q_{topic['id']}")
+    with read_cols[1]:
+        if st.button("🔊 " + ("Lire tout l'exercice" if LANG == "fr"
+                              else "Read Full Exercise"),
+                     key=f"read_full_{topic['id']}", use_container_width=True):
+            full_text = build_exercise_text(ex, topic)
+            speak(full_text, lang=LANG, key=f"tts_full_{topic['id']}")
 
     ans = st.text_input(
         "Votre réponse" if LANG == "fr" else "Your answer",
@@ -531,7 +693,7 @@ def render_practice(topic):
                      use_container_width=True):
             st.session_state[key_fb] = ("info", ex["solution"], "Solution")
     with bcols[3]:
-        if st.button("🔊 " + ("Lire" if LANG == "fr" else "Read"),
+        if st.button("🔊 " + ("Lire la réponse" if LANG == "fr" else "Read Answer"),
                      key=f"read_fb_{topic['id']}", use_container_width=True):
             fb = st.session_state.get(key_fb)
             if fb:
@@ -548,9 +710,9 @@ def render_practice(topic):
             st.info(f"ℹ️ {label} — {msg}")
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # RENDER: BLACK BOARD
-# -----------------------------------------------------------------------------
+# =============================================================================
 def render_blackboard():
     st.markdown("### 🎓 " + ("LE TABLEAU NOIR" if LANG == "fr"
                              else "THE BLACK BOARD"))
@@ -588,9 +750,17 @@ def render_blackboard():
             unsafe_allow_html=True,
         )
 
-        if st.button("🔊 " + ("Lire" if LANG == "fr" else "Read"),
-                     key="bb_read_q"):
-            speak(ex["q"], lang=LANG, key="tts_bb_q")
+        read_cols = st.columns(2)
+        with read_cols[0]:
+            if st.button("🔊 " + ("Lire la question" if LANG == "fr"
+                                  else "Read Question"),
+                         key="bb_read_q", use_container_width=True):
+                speak(ex["q"], lang=LANG, key="tts_bb_q")
+        with read_cols[1]:
+            if st.button("🔊 " + ("Lire tout le problème" if LANG == "fr"
+                                  else "Read Full Problem"),
+                         key="bb_read_full", use_container_width=True):
+                speak(build_bb_text(ex), lang=LANG, key="tts_bb_full")
 
         bb_ans = st.text_input(
             "Écrivez votre réponse…" if LANG == "fr" else "Write your answer…",
@@ -611,16 +781,20 @@ def render_blackboard():
                 st.session_state.bb_streak += 1
                 reward = random.choice(REWARDS)
                 st.session_state.bb_rewards.append(reward)
+                msg = (f"Bravo ! La réponse est {ex['a']}." if LANG == "fr"
+                       else f"Correct! The answer is {ex['a']}.")
                 st.success(f"✅ {'CORRECT !' if LANG == 'fr' else 'CORRECT!'} "
                            f"{ex['a']}  ·  Reward: {reward['e']}")
-                speak(f"Correct! {ex['a']}", lang=LANG, key="tts_bb_ok")
+                speak(msg, lang=LANG, key="tts_bb_ok")
                 st.session_state.bb_current = None
             else:
                 st.session_state.bb_streak = 0
+                hint = ex["hint"]
                 st.error(f"❌ {'Pas tout à fait.' if LANG == 'fr' else 'Not quite.'} "
-                         f"{'Indice' if LANG == 'fr' else 'Hint'}: {ex['hint']}")
-                speak(f"{'Pas tout à fait. Indice: ' if LANG == 'fr' else 'Not quite. Hint: '}"
-                      f"{ex['hint']}", lang=LANG, key="tts_bb_bad")
+                         f"{'Indice' if LANG == 'fr' else 'Hint'}: {hint}")
+                msg = (f"Pas tout à fait. Indice : {hint}." if LANG == "fr"
+                       else f"Not quite. Hint: {hint}.")
+                speak(msg, lang=LANG, key="tts_bb_bad")
 
     st.markdown(
         f'<div style="text-align:center;margin:12px 0;">'
